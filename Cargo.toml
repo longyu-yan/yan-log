@@ -1,0 +1,23 @@
+[package]
+name = "yan-log"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.91.1"
+repository = "https://github.com/longyu-yan/yan-log"
+homepage = "https://github.com/longyu-yan/yan-log"
+description = """
+轻量级日志库
+"""
+
+[features]
+default = []
+stdout = []
+
+
+[dependencies]
+proc-tools-core = { version = "0.1.0", default-features = false, features = ["def_cn", "sup_cn", "sup_en"] }
+proc-tools-helper = { version = "0.1.0", default-features = false, features = ["def_cn", "sup_cn", "sup_en"] }
+proc-tools = { version = "0.1.0", default-features = false, features = ["lang-cn"] }
+
+log = "0.4.28" #日志门面
