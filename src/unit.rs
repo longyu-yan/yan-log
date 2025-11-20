@@ -227,12 +227,7 @@ pub fn timestamp_ms_to_datetime(timestamp: u128) -> (u32, u8, u8, u8, u8, u8, u1
 ///
 /// # 返回
 /// - `Ok(Vec<PathBuf>)`: 匹配文件的路径列表（按修改时间新到旧排序）
-/// - `Err(io::Error)`: 目录读取或文件操作错误
-///
-/// # 注意
-/// - 不使用正则，通过手动解析占位符实现匹配
-/// - 仅支持 %Y/%m/%d/%H/%M/%S/%i 占位符（长度固定或数字序列）
-/// - 性能优化：模式解析仅一次，文件匹配用字符串切片（O(1)）
+/// - `Err(std::io::Error)`: 目录读取或文件操作错误
 pub(crate) fn find_log_files(dir_path: &str, pattern: &str) -> io::Result<Vec<PathBuf>> {
     let fragments = parse_pattern(pattern);
     let mut files: Vec<(PathBuf, SystemTime)> = Vec::new();
@@ -407,12 +402,14 @@ fn matches_pattern_bytes(file_name: &str, fragments: &[Fragment]) -> bool {
                 pos += s.len();
             }
             Fragment::PlaceholderTwoDigits => {
-                for ch in &file_name_bytes[pos..pos + 2] {
-                    if !ch.is_ascii_digit() {
-                        return false;
-                    }
+                if file_name_bytes[pos].is_ascii_digit() {
+                    return false;
                 }
-                pos += 2;
+                pos += 1;
+                if file_name_bytes[pos].is_ascii_digit() {
+                    return false;
+                }
+                pos += 1;
             }
             Fragment::PlaceholderFourDigits => {
                 for ch in &file_name_bytes[pos..pos + 4] {

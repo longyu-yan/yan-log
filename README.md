@@ -1,7 +1,6 @@
 # yan-log
 
-yan-log是一个用Rust语言开发的轻量级日志库，采用异步输出日志，支持日志级别、按日期时间拆分、按文件大小拆分、自动删除旧文件，建议搭配
-log 日志门面使用，
+yan-log是一个用Rust语言开发的轻量级日志库，采用异步输出日志，支持日志级别、按日期时间拆分、按文件大小拆分、自动删除旧文件，建议搭配 log 日志门面使用，
 默认情况在 release 模式不会打印日志到控制台，可通过开启 stdout 启动 release 模式的控制台日志打印
 
 ## Features（特性）
@@ -38,7 +37,7 @@ fn main() {
 
     // 直接输出日志，不使用 log 日志门面
     // 输出的日志级别会优先采用 LOG 变量指定的级别，而不会采用 init 函数指定的日志级别
-    log.debug("Application started");
+    LOG.debug("应用已启动");
 
     // shutdown函数用于程序停止时优雅关闭异步日志线程，将日志完全写入文件，避免日志丢失
     yan_log::Logger::shutdown();
@@ -64,15 +63,15 @@ fn main() {
         .unwrap();
 
     // 记录跟踪日志
-    log::trace!("Application started");
+    log::trace!("应用已启动");
     // 记录调试日志
-    log::debug!("Application started");
+    log::debug!("应用已启动");
     // 记录信息日志
-    log::info!("Application started");
+    log::info!("应用已启动");
     // 记录警告日志
-    log::warn!("Application started");
+    log::warn!("应用已启动");
     // 记录错误日志
-    log::error!("Application started");
+    log::error!("应用已启动");
 
     // shutdown函数用于程序停止时优雅关闭异步日志线程，将日志完全写入文件，避免日志丢失
     yan_log::Logger::shutdown();

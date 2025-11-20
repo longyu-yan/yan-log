@@ -10,8 +10,7 @@ use proc_tools_helper::lang_tr;
 use std::cmp::{Ordering, PartialOrd};
 use std::sync::RwLock;
 use std::sync::mpsc::SyncSender;
-use std::thread::sleep;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -284,7 +283,6 @@ fn init_log_backend(mut logger_format: LoggerFormat) -> Result<(), std::io::Erro
                 } else if let Err((msg, None)) = result {
                     eprintln!("{}", msg);
                 }
-                sleep(Duration::from_secs(5));
                 is_create_file = false;
             }
             // 打印日志到控制台
