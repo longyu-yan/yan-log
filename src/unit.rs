@@ -228,6 +228,7 @@ pub fn timestamp_ms_to_datetime(timestamp: u128) -> (u32, u8, u8, u8, u8, u8, u1
 /// # 返回
 /// - `Ok(Vec<PathBuf>)`: 匹配文件的路径列表（按修改时间新到旧排序）
 /// - `Err(std::io::Error)`: 目录读取或文件操作错误
+#[inline]
 pub(crate) fn find_log_files(dir_path: &str, pattern: &str) -> io::Result<Vec<PathBuf>> {
     let fragments = parse_pattern(pattern);
     let mut files: Vec<(PathBuf, SystemTime)> = Vec::new();
@@ -281,6 +282,7 @@ pub(crate) fn find_log_files(dir_path: &str, pattern: &str) -> io::Result<Vec<Pa
 /// - 不支持嵌套或复杂的占位符语法
 /// - 未识别的占位符会被忽略
 /// - 模式字符串必须是有效的UTF-8编码
+#[inline(always)]
 fn parse_pattern(pattern: &str) -> Vec<Fragment> {
     let mut fragments: Vec<Fragment> = Vec::new();
     let mut i: usize = 0;
@@ -360,6 +362,7 @@ enum Fragment {
 /// assert_eq!(utf8_char_len(0xC3), 2);    // 双字节UTF-8
 /// assert_eq!(utf8_char_len(0xE2), 3);    // 三字节UTF-8
 /// ```
+#[inline(always)]
 fn utf8_char_len(next_byte: u8) -> usize {
     if next_byte & 0b1110_0000 == 0b1100_0000 {
         2
@@ -390,6 +393,7 @@ fn utf8_char_len(next_byte: u8) -> usize {
 /// - `PlaceholderTwoDigits`: 匹配连续两个 `ASCII` 数字
 /// - `PlaceholderFourDigits`: 匹配连续四个 `ASCII` 数字
 /// - `PlaceholderAnyDigits`: 匹配连续 1-39 个 `ASCII` 数字
+#[inline(always)]
 fn matches_pattern_bytes(file_name: &str, fragments: &[Fragment]) -> bool {
     let mut pos = 0;
     let file_name_bytes = file_name.as_bytes();
@@ -402,11 +406,11 @@ fn matches_pattern_bytes(file_name: &str, fragments: &[Fragment]) -> bool {
                 pos += s.len();
             }
             Fragment::PlaceholderTwoDigits => {
-                if file_name_bytes[pos].is_ascii_digit() {
+                if !file_name_bytes[pos].is_ascii_digit() {
                     return false;
                 }
                 pos += 1;
-                if file_name_bytes[pos].is_ascii_digit() {
+                if !file_name_bytes[pos].is_ascii_digit() {
                     return false;
                 }
                 pos += 1;
