@@ -52,10 +52,12 @@ fn main() {
     yan_log::Logger::init("logs", yan_log::LogLevel::Debug)
         // 设置日志文件命名模式和时间分割规则
         .set_file_pattern("app_%Y-%m-%d_%H：%M：%S-%i.log", yan_log::LoggerFormatTimeDivisionRule::Day)
-        // 设置日志文件大小触发拆分文件策略
+        // 设置日志文件大小触发拆分文件策略（100MB = 104857600B）
         .set_max_file_triggering_policy(104857600)
         // 设置最大保留日志文件数量
         .set_max_retained_files(100)
+        // 设置是时间偏移量，北京时间为 utc+8（8小时 = 2880_0000毫秒）
+        .set_timezone_offset(2880_0000)
         // 设置日志消息通道的缓冲区大小
         .set_bound(200)
         // 启动日志系统

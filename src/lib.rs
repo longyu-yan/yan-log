@@ -1,15 +1,15 @@
 pub mod unit;
 
 use crate::unit::{
-    find_log_files, format_u8_as_padded_2_digits, format_u16_as_padded_3_digits,
+    find_log_files, format_u16_as_padded_3_digits, format_u8_as_padded_2_digits,
     timestamp_ms_to_datetime,
 };
 use proc_tools::concat_vars;
 use proc_tools_core::{concat_str, replace_multiple_patterns};
 use proc_tools_helper::lang_tr;
 use std::cmp::{Ordering, PartialOrd};
-use std::sync::RwLock;
 use std::sync::mpsc::SyncSender;
+use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs::{self, OpenOptions},
@@ -100,16 +100,19 @@ impl LogMessage {
     /// );
     /// ```
     #[inline]
-    fn new(level: LogLevel, module_path: std::sync::Arc<str>, message: String) -> Self {
+    fn from<T: Into<String>>(level: LogLevel, module_path: &str, message: T) -> Self {
         let mut timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        timestamp += 28_800_000;
+        match get_timezone_offset() {
+            TimezoneOffset::PositiveNumber(v) => timestamp += v,
+            TimezoneOffset::NegativeNumber(v) => timestamp -= v,
+        };
         let (year, month, day, hour, minute, second, millis) = timestamp_ms_to_datetime(timestamp);
 
-        const HYPHEN: &str = "-";
-        const COLON: &str = ":";
+        const HYPHEN: char = '-';
+        const COLON: char = ':';
         let mut bytes = [0u8; 3];
         let month_buf = format_u8_as_padded_2_digits(month, &mut bytes);
         let mut bytes = [0u8; 3];
@@ -129,18 +132,19 @@ impl LogMessage {
             LogLevel::Debug => "DEBUG",
             LogLevel::Trace => "TRACE",
         };
+        let message = message.into();
         let formatted = concat_vars!(
             "[":String,
             year :u32,
-            HYPHEN : String,
+            HYPHEN : char,
             month_buf : String,
-            HYPHEN : String,
+            HYPHEN : char,
             day_buf : String,
             " " : String,
             hour_buf : String,
-            COLON : String,
+            COLON : char,
             minute_buf : String,
-            COLON : String,
+            COLON : char,
             second_buf : String,
             "." : String,
             millis_buf : String,
@@ -161,6 +165,19 @@ impl LogMessage {
 
 /// 全局日志消息发送器及其处理线程的实例。
 static LOG_BACKEND: RwLock<Option<(SyncSender<LogMessage>, JoinHandle<()>)>> = RwLock::new(None);
+/// 全局时区偏移
+static TIMEZONE_OFFSET: OnceLock<TimezoneOffset> = OnceLock::new();
+
+/// 设置全局时区偏移
+#[inline]
+pub(crate) fn set_timezone_offset(value: TimezoneOffset) {
+    TIMEZONE_OFFSET.get_or_init(|| value);
+}
+/// 获取全局时区偏移
+#[inline]
+pub(crate) fn get_timezone_offset() -> &'static TimezoneOffset {
+    &*TIMEZONE_OFFSET.get_or_init(|| TimezoneOffset::PositiveNumber(0))
+}
 /// 初始化日志发送器和日志处理线程
 /// - 设置日志文件目录，创建日志文件，并启动后台线程处理日志消息。
 /// - 此函数是日志系统的核心初始化方法。
@@ -278,10 +295,10 @@ fn init_log_backend(mut logger_format: LoggerFormat) -> Result<(), std::io::Erro
             // 当创建新日志文件时，删除旧文件
             if is_create_file && logger_format.max_retained_files != 0 {
                 let result = prune_old_logs(&mut logger_format);
-                if let Err((msg, Some(e))) = result {
-                    eprintln!("{}{}", msg, e);
-                } else if let Err((msg, None)) = result {
-                    eprintln!("{}", msg);
+                if let Err((msg_str, Some(e))) = result {
+                    eprintln!("{}{}", msg_str, e);
+                } else if let Err((msg_str, None)) = result {
+                    eprintln!("{}", msg_str);
                 }
                 is_create_file = false;
             }
@@ -296,17 +313,25 @@ fn init_log_backend(mut logger_format: LoggerFormat) -> Result<(), std::io::Erro
             // 写入日志文件
             match write!(log_file, "{}", msg.formatted) {
                 Ok(_) => logger_format.file_size += msg.formatted.len() as u64,
-                Err(e) => eprintln!(
-                    "{}{}",
-                    lang_tr!(
+                Err(e) => {
+                    let msg_str = lang_tr!(
                         cn = "写入日志文件失败：",
                         en = "Writing to log file failed:"
-                    ),
-                    e
-                ),
+                    );
+                    eprintln!("{}{}", msg_str, e)
+                }
             };
             // 刷新文件确保写入
-            let _ = log_file.flush();
+            match log_file.flush() {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg_str = lang_tr!(
+                        cn = "刷新输出流失败：",
+                        en = "Refresh output stream failed:"
+                    );
+                    eprintln!("{}{}", msg_str, e)
+                }
+            };
         }
     });
     let new_backend = (sender, handle);
@@ -365,6 +390,7 @@ pub struct Logger {
     log_level: LogLevel,
 }
 
+/// 定义日志相等性比较
 impl PartialEq for LogLevel {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -378,6 +404,7 @@ impl PartialEq for LogLevel {
     }
 }
 
+/// 定义日志顺序关系
 impl PartialOrd for LogLevel {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         // 定义级别优先级（数字越大表示级别越高）
@@ -443,11 +470,10 @@ impl Logger {
     /// ```
     #[inline(always)]
     pub fn init(dir_path: &str, level: LogLevel) -> LoggerFormat {
-        let mut timestamp = SystemTime::now()
+        let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        timestamp += 28_800_000;
         let (year, month, day, hour, minute, second, millis) = timestamp_ms_to_datetime(timestamp);
         LoggerFormat {
             dir_path: Box::from(dir_path),
@@ -585,11 +611,7 @@ impl Logger {
         let option = log_backend.as_ref();
 
         if let Some((sender, _)) = option {
-            if let Err(e) = sender.send(LogMessage::new(
-                level,
-                std::sync::Arc::from(self.module_path),
-                message.into(),
-            )) {
+            if let Err(e) = sender.send(LogMessage::from(level, self.module_path, message)) {
                 let msg_str = lang_tr!(
                     cn = "日志记录失败，错误信息:",
                     en = "Logging failed with error message:"
@@ -648,12 +670,11 @@ impl log::Log for Logger {
             log::Level::Debug => LogLevel::Debug,
             log::Level::Trace => LogLevel::Trace,
         };
-        let module_path: std::sync::Arc<str> =
-            std::sync::Arc::from(record.module_path().unwrap_or_else(|| "None"));
+        let module_path: &str = record.module_path().unwrap_or_else(|| "None");
         let log_backend = LOG_BACKEND.read().unwrap();
         let option = log_backend.as_ref();
         if let Some((sender, _)) = option {
-            if let Err(e) = sender.send(LogMessage::new(
+            if let Err(e) = sender.send(LogMessage::from(
                 level,
                 module_path,
                 record.args().to_string(),
@@ -706,6 +727,14 @@ pub struct LoggerFormat {
     max_retained_files: u64,
 }
 
+/// UTC时间偏移
+pub(crate) enum TimezoneOffset {
+    /// 东时区偏移 UTC + N（毫秒）
+    PositiveNumber(u128),
+    /// 西时区偏移 UTC - N（毫秒）
+    NegativeNumber(u128),
+}
+
 /// 日志文件时间分割规则枚举
 /// - 定义日志文件按时间维度进行分割的不同策略，用于自动管理日志文件的创建和轮转。
 /// - 根据不同的时间粒度，可以按年、月、日来组织日志文件。
@@ -742,7 +771,7 @@ impl LoggerFormat {
     ///     .unwrap()
     ///     .as_millis();
     /// timestamp += 28_800_000;
-    /// let now = yan_log::util::timestamp_to_datetime(timestamp);
+    /// let now = yan_log::unit::timestamp_ms_to_datetime(timestamp);
     /// let log_fmt = log_fmt.update_filename_for_time(now);
     /// ```
     /// # 示例
@@ -823,6 +852,7 @@ impl LoggerFormat {
     ///   - `false`: 不需要分割，继续使用当前文件
     ///
     /// # 分割规则说明
+    ///
     /// - `None`: 不按时间分割，始终返回 `false`
     /// - `Year`: 当年份不同时分割
     /// - `Month`: 当年份或月份不同时分割
@@ -958,13 +988,41 @@ impl LoggerFormat {
     ) -> Self {
         self.time_division_rule = time_division_rule;
         self.file_pattern = Box::from(file_pattern);
-        let mut timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        timestamp += 28_800_000;
-        let now = timestamp_ms_to_datetime(timestamp);
-        self.update_filename_for_time(now)
+        self
+    }
+
+    /// 设置时间偏移量（单位：毫秒）
+    /// - 根据偏移量的正负值自动设置时区偏移方向
+    /// - 正数表示东时区，负数表示西时区
+    ///
+    /// # 参数
+    /// - `offset`: 时间偏移量，单位为毫秒
+    ///   - 正数：东时区（UTC+）
+    ///   - 负数：西时区（UTC-）
+    ///
+    /// # 返回值
+    /// - `Self`: 返回自身的所有权，支持链式调用
+    ///
+    /// # 注意
+    /// - 内部会自动处理偏移量的正负转换，将负值转换为对应的正值并标记为负方向
+    /// - 该操作只能设置一次，后续重复设置无效
+    ///
+    /// # 示例
+    /// ```
+    /// let config = TimeConfig::new()
+    ///     .set_timezone_offset(28800000); // 设置为 UTC+8（8小时 = 28800000毫秒）
+    ///
+    /// let config = TimeConfig::new()
+    ///     .set_timezone_offset(-18000000); // 设置为 UTC-5（-5小时 = -18000000毫秒）
+    /// ```
+    #[inline]
+    pub fn set_timezone_offset(self, offset: i128) -> Self {
+        if offset < 0 {
+            set_timezone_offset(TimezoneOffset::NegativeNumber(offset.abs() as u128));
+        } else {
+            set_timezone_offset(TimezoneOffset::PositiveNumber(offset as u128));
+        };
+        self
     }
 
     /// 设置最大保留日志文件数量
@@ -1022,6 +1080,19 @@ impl LoggerFormat {
         log::set_logger(Box::leak(box_logger)).unwrap();
         // 设置全局日志级别
         log::set_max_level(self.level.to_level_filter());
-        init_log_backend(self)
+
+        // 获取当前时间戳，根据已设置的时间偏移量重新设置 日期时间 和 日志文件名
+        let mut timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        match get_timezone_offset() {
+            TimezoneOffset::PositiveNumber(v) => timestamp += v,
+            TimezoneOffset::NegativeNumber(v) => timestamp -= v,
+        };
+        let now = timestamp_ms_to_datetime(timestamp);
+        let mut s = self.update_filename_for_time(now);
+        s.datetime = now;
+        init_log_backend(s)
     }
 }
